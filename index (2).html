@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scrap to Scale: a circular economy game</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e9eeee;--ink:#17262b;--mute:#5b6b70;--card:#fff;--line:#cdd7d8;--loop:#1d6f8a;--waste:#c4851c;--good:#2f8a57;--bad:#b4402f}
+@media (prefers-color-scheme:dark){:root{--bg:#10191c;--ink:#e6eeee;--mute:#93a5a9;--card:#182428;--line:#2b3b40;--loop:#52b3d0;--waste:#e0a443;--good:#5fc58a;--bad:#e5806f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque","Avenir Next",system-ui,sans-serif}
+main{max-width:920px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:2rem;font-weight:800;margin:.2em 0}
+h2{font-size:1.25rem;margin:0 0 .4em}
+p{max-width:70ch}
+.mute{color:var(--mute)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:12px 0}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:10px 16px;background:var(--loop);color:#fff;cursor:pointer}
+button.alt{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button:disabled{opacity:.4;cursor:not-allowed}
+button:focus-visible,input:focus-visible{outline:3px solid var(--waste);outline-offset:2px}
+input[type=number]{font:inherit;width:90px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+label{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0}
+.bar{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.stats{display:flex;gap:18px;flex-wrap:wrap;flex:1}
+.stat b{display:block;font-size:1.3rem}
+.stat span{font-size:.8rem;color:var(--mute)}
+.steps{display:flex;gap:6px;margin:12px 0;flex-wrap:wrap}
+.steps div{flex:1;min-width:90px;padding:6px 8px;border-bottom:4px solid var(--line);font-size:.85rem;color:var(--mute)}
+.steps .on{border-color:var(--loop);color:var(--ink);font-weight:800}
+.steps .done{border-color:var(--good)}
+.event{border-left:6px solid var(--waste)}
+.why{border-left:6px solid var(--loop);font-size:.95rem}
+.note{color:var(--good);font-weight:600}
+.warn{color:var(--bad);font-weight:600}
+.pick{text-align:left;background:var(--card);color:var(--ink);border:1px solid var(--line);padding:14px}
+.pick:hover{border-color:var(--loop)}
+.pick small{display:block;font-weight:400;color:var(--mute);margin-top:4px}
+ul.log{padding-left:18px;color:var(--mute);font-size:.9rem}
+.ring{width:84px;height:84px}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+"use strict";
+const ROUNDS = 10;
+const $ = s => document.querySelector(s);
+const rnd = (a, b) => a + Math.random() * (b - a);
+const $$ = n => "$" + Math.round(n).toLocaleString();
+const d1 = n => (Math.round(n * 10) / 10).toString();
+const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+
+const BIZ = {
+  clothing: { name: "Clothing maker", mat: "fibre", prod: "garment", price: 30, virgin: 10, wr: .3,
+    waste: "textile offcuts", buyer: { n: "InsulaFlock (insulation maker)", pay: 5 }, sup: { n: "DenimBack (fabric collector)", cost: 5 } },
+  furniture: { name: "Furniture maker", mat: "timber", prod: "chair", price: 40, virgin: 14, wr: .25,
+    waste: "wood offcuts", buyer: { n: "ChipBoard Co. (particleboard)", pay: 6.5 }, sup: { n: "Pallet Recovery", cost: 7 } },
+  food: { name: "Food producer", mat: "produce", prod: "meal kit", price: 22, virgin: 8, wr: .35,
+    waste: "peelings and surplus", buyer: { n: "BioGas Farm (anaerobic digester)", pay: 3.5 }, sup: { n: "Surplus Grocer", cost: 4 } },
+  construction: { name: "Construction firm", mat: "aggregate", prod: "building block", price: 48, virgin: 17, wr: .2,
+    waste: "rubble", buyer: { n: "RoadBase Ltd (road sub-base)", pay: 7.5 }, sup: { n: "Demolition Yard", cost: 9 } }
+};
+const EVENTS = [
+  { t: "Virgin material shortage", x: "Scarcity lifts virgin prices by 35%. Reclaimed inputs act as a hedge.", e: { vm: 1.35 } },
+  { t: "Landfill tax rises", x: "Disposal fees double. Waste you cannot place now costs real money.", e: { lf: 2 } },
+  { t: "Green-minded customers", x: "Demand is up 20% for firms running a take-back scheme.", e: { green: 1.2 } },
+  { t: "Waste buyer under pressure", x: "Your waste buyer pays 30% less this round.", e: { pay: .7 } },
+  { t: "Bumper byproduct supply", x: "Your supplier has twice the usual stock to sell.", e: { sup: 2 } },
+  { t: "Calm market", x: "Nothing unusual this round.", e: {} }
+];
+const WHY = [
+  "Virgin material is simple to buy but its price rises as it gets scarce. Byproducts from other firms are cheaper but come in limited amounts, and a unit may yield less usable material.",
+  "Every product you sell leaves your hands. Without a way to get it back, it becomes someone else's waste. Production also creates offcuts, so design choices matter.",
+  "Recovered products can be repaired and resold (keeps the most value), recycled into material (keeps the material), or dumped (keeps nothing).",
+  "One firm's waste is another's input. Deals that repeat build trust: after two rounds with the same buyer you get a partnership price bonus. Transport cost can erase thin margins.",
+  "Profit is fuel for redesign. Investments in collection, repair, reusable design, and sorting make the loop tighter and protect you from price shocks."
+];
+const UPG = [
+  { id: "collect", n: i => i ? "Collection upgrade: take-back with deposits" : "Collection: customer take-back program", max: 2, cost: [100, 200],
+    d: "Raises the share of sold products that come back (15% → 45% → 75%)." },
+  { id: "repair", n: () => "Repair workshop", max: 1, cost: [150], d: "Lets you repair returned products and resell them at 60% of the new price." },
+  { id: "design", n: () => "Design for less waste", max: 1, cost: [180], d: "Cuts production offcuts by half." },
+  { id: "sort", n: () => "Sorting equipment", max: 1, cost: [120], d: "Cleaner streams: reclaimed inputs yield 95% instead of 75%, and your waste sells for 30% more." }
+];
+const RATE = [.15, .45, .75];
+
+let S = null;
+
+function start(key) {
+  const B = BIZ[key], k = B.price / 30;
+  S = { key, B, k, round: 1, phase: 0, cash: Math.round(300 * k), matV: 0, matC: 0, prod: 0, returning: 0, pending: 0, waste: 0,
+    upg: { collect: 0, repair: 0, design: 0, sort: 0 }, streak: 0, usedV: 0, usedC: 0, kept: 0, lost: 0, sold: 0, note: "", log: [], startCash: Math.round(300 * k) };
+  newRound();
+}
+
+function newRound() {
+  const r = S.round, B = S.B, k = S.k;
+  const ev = r === 1 ? EVENTS[5] : EVENTS[Math.floor(Math.random() * EVENTS.length)];
+  const env = Object.assign({ vm: 1 + .04 * (r - 1), lf: 1 + .12 * (r - 1), green: 1, pay: 1, sup: 1 }, {});
+  for (const key in ev.e) env[key] = key === "vm" || key === "lf" ? env[key] * ev.e[key] : ev.e[key];
+  const sort = S.upg.sort;
+  S.ev = ev; S.env = env;
+  S.m = {
+    vp: B.virgin * env.vm * rnd(.92, 1.08),
+    bp: B.sup.cost * rnd(.9, 1.1) + k * rnd(1, 2.5),
+    supply: Math.round(8 * env.sup),
+    yld: sort ? .95 : .75,
+    pay: B.buyer.pay * env.pay * (S.streak >= 2 ? 1.2 : 1) * (sort ? 1.3 : 1),
+    btr: k * rnd(.5, 1.5),
+    lf: 2 * k * env.lf
+  };
+  S.returning = S.pending; S.pending = 0; S.waste = 0; S.phase = 0; S.note = "";
+}
+
+const circOut = () => S.kept + S.lost ? S.kept / (S.kept + S.lost) : 0;
+const circIn = () => S.usedV + S.usedC ? S.usedC / (S.usedV + S.usedC) : 0;
+const demand = p => Math.round(14 * clamp(1 + (1 - p / S.B.price) * 1.5, 0, 2) * (S.upg.collect ? S.env.green : 1));
+
+function say(msg) { S.note = msg; }
+function next() { S.phase++; render(); }
+function val(id) { return Math.max(0, Math.floor(+($(id).value) || 0)); }
+
+function header() {
+  const c = Math.round(circOut() * 100), circ = 2 * Math.PI * 34;
+  return `<div class="card bar">
+    <svg class="ring" viewBox="0 0 84 84" role="img" aria-label="Circularity ${c}%">
+      <circle cx="42" cy="42" r="34" fill="none" stroke="var(--line)" stroke-width="9"/>
+      <circle cx="42" cy="42" r="34" fill="none" stroke="var(--loop)" stroke-width="9" stroke-linecap="round"
+        stroke-dasharray="${circ * c / 100} ${circ}" transform="rotate(-90 42 42)"/>
+      <text x="42" y="47" text-anchor="middle" font-size="15" font-weight="800" fill="currentColor">${c}%</text></svg>
+    <div class="stats">
+      <div class="stat"><b>${S.round} / ${ROUNDS}</b><span>round</span></div>
+      <div class="stat"><b>${$$(S.cash)}</b><span>cash</span></div>
+      <div class="stat"><b>${d1(S.matV + S.matC)}</b><span>${S.B.mat} in stock</span></div>
+      <div class="stat"><b>${S.prod}</b><span>${S.B.prod}s in stock</span></div>
+      <div class="stat"><b>${Math.round(circIn() * 100)}%</b><span>material from loop</span></div>
+    </div></div>
+    <div class="steps">${["Source", "Produce and sell", "Recover", "Trade", "Improve"].map((n, i) =>
+      `<div class="${i === S.phase ? "on" : i < S.phase ? "done" : ""}">${n}</div>`).join("")}</div>`;
+}
+
+function render() {
+  if (!S) return title();
+  if (S.round > ROUNDS) return ending();
+  const ph = [pSource, pProduce, pRecover, pTrade, pImprove][S.phase]();
+  $("#app").innerHTML = header() + (S.phase === 0 ? `<div class="card event"><h2>${S.ev.t}</h2><p>${S.ev.x}</p></div>` : "") +
+    (S.note ? `<p class="note">${S.note}</p>` : "") + ph +
+    `<div class="card why"><b>Why this step matters.</b> ${WHY[S.phase]}</div>` +
+    (S.log.length ? `<ul class="log">${S.log.slice(-5).reverse().map(l => `<li>${l}</li>`).join("")}</ul>` : "");
+  bind();
+}
+
+function title() {
+  $("#app").innerHTML = `<h1>Scrap to Scale</h1>
+  <p>Run a company in a shared economy for ${ROUNDS} rounds. One firm's waste is another firm's raw material, so build partnerships that keep materials moving and still make a profit.</p>
+  <p class="mute">Each round: Source, Produce and sell, Recover, Trade, Improve. Choose your business:</p>
+  <div class="grid">${Object.entries(BIZ).map(([k, b]) =>
+    `<button class="pick" onclick="start('${k}');render()">${b.name}<small>Turns ${b.mat} into ${b.prod}s. Sells ${b.waste} to ${b.buyer.n}.</small></button>`).join("")}</div>`;
+}
+
+function pSource() {
+  const m = S.m, B = S.B;
+  return `<div class="grid">
+  <div class="card"><h2>Virgin ${B.mat}</h2><p class="mute">${$$(m.vp)} per unit. Unlimited supply.</p>
+    <label>Units to buy <input type="number" id="nv" min="0" value="0"></label></div>
+  <div class="card"><h2>${B.sup.n}</h2><p class="mute">Reclaimed ${B.mat}: ${$$(m.bp)} per unit including transport. Only ${m.supply} available. Each unit gives ${m.yld} units of usable material.</p>
+    <label>Units to buy <input type="number" id="nb" min="0" max="${m.supply}" value="0"></label></div></div>
+  <p id="pv" class="mute"></p><button id="go">Confirm purchase</button>`;
+}
+function pProduce() {
+  const mat = S.matV + S.matC, max = Math.min(14, Math.floor(mat)), B = S.B;
+  return `<div class="card"><p>You have ${d1(mat)} units of ${B.mat}. Capacity is 14 ${B.prod}s per round. Labour costs ${$$(B.price * .15)} per unit.</p>
+    <label>${B.prod}s to make (max ${max}) <input type="number" id="nu" min="0" max="${max}" value="${max}"></label>
+    <label>Selling price per ${B.prod} <input type="number" id="np" min="1" value="${B.price}"></label></div>
+  <p id="pv" class="mute"></p><button id="go">Make and sell</button>`;
+}
+function pRecover() {
+  const R = S.returning, B = S.B, rep = S.upg.repair;
+  if (!R) return `<div class="card"><p>No used ${B.prod}s have come back yet. Products sold this round return next round, depending on your collection system.</p></div><button id="go">Continue</button>`;
+  return `<div class="card"><p>${R} used ${B.prod}s came back.</p>
+    <label>Repair and resell (${$$(B.price * .6)} each, costs ${$$(B.price * .2)}) <input type="number" id="nr" min="0" max="${rep ? Math.min(R, 8) : 0}" value="0" ${rep ? "" : "disabled"}></label>
+    ${rep ? "" : `<p class="mute">Build a repair workshop to unlock this.</p>`}
+    <label>Recycle into material (costs ${$$(B.price * .08)}, returns 0.6 units) <input type="number" id="nc" min="0" max="${R}" value="0"></label>
+    <p class="mute">Anything left is dumped at ${$$(S.m.lf)} per unit.</p></div><p id="pv"></p><button id="go">Confirm</button>`;
+}
+function pTrade() {
+  const W = S.waste, B = S.B, m = S.m;
+  if (!W) return `<div class="card"><p>No ${B.waste} this round.</p></div><button id="go">Continue</button>`;
+  const net = m.pay - m.btr;
+  return `<div class="card"><p>You produced ${d1(W)} units of ${B.waste}. <b>${B.buyer.n}</b> pays ${$$(m.pay)} per unit${S.streak >= 2 ? " (partnership bonus applied)" : ""}, with ${$$(m.btr)} transport. Net ${$$(net)} per unit.</p>
+    ${net <= 0 ? `<p class="warn">Transport eats the whole price. Dumping may be cheaper.</p>` : ""}
+    <label>Units to sell (max ${Math.min(Math.floor(W), 12)}) <input type="number" id="ns" min="0" max="${Math.min(Math.floor(W), 12)}" value="${Math.min(Math.floor(W), 12)}"></label>
+    <p class="mute">Unsold waste is dumped at ${$$(m.lf)} per unit.</p></div><p id="pv"></p><button id="go">Confirm trade</button>`;
+}
+function pImprove() {
+  const items = UPG.map(u => {
+    const lv = S.upg[u.id], done = lv >= u.max, c = Math.round(u.cost[lv] * S.k / 5) * 5;
+    return `<div class="card"><h2>${u.n(lv)}</h2><p class="mute">${u.d}</p>
+      ${done ? "<b>Installed</b>" : `<button data-u="${u.id}" ${S.cash < c ? "disabled" : ""}>Invest ${$$(c)}</button>`}</div>`;
+  }).join("");
+  return `<div class="grid">${items}</div><button id="go" class="alt">${S.round === ROUNDS ? "Close the books" : "End round"}</button>`;
+}
+
+function bind() {
+  const go = $("#go"), pv = $("#pv");
+  const B = S.B, m = S.m;
+  if (S.phase === 0) {
+    const upd = () => { const v = val("#nv"), b = Math.min(val("#nb"), m.supply), c = v * m.vp + b * m.bp;
+      pv.innerHTML = `Cost ${$$(c)}, gives ${d1(v + b * m.yld)} units of material.` + (c > S.cash ? ` <span class="warn">Not enough cash.</span>` : "");
+      go.disabled = c > S.cash; };
+    ["#nv", "#nb"].forEach(i => $(i).oninput = upd); upd();
+    go.onclick = () => { const v = val("#nv"), b = Math.min(val("#nb"), m.supply);
+      S.cash -= v * m.vp + b * m.bp; S.matV += v; S.matC += b * m.yld;
+      say(`Bought ${v} virgin and ${b} reclaimed units.`); next(); };
+  } else if (S.phase === 1) {
+    const upd = () => { const u = val("#nu"), p = +$("#np").value || 1, stock = S.prod + u, dm = demand(p), sl = Math.min(stock, dm);
+      pv.innerHTML = `Demand at this price: ${dm}. You would sell ${sl}, earning ${$$(sl * p)} and spending ${$$(u * B.price * .15)} on labour.`; };
+    ["#nu", "#np"].forEach(i => $(i).oninput = upd); upd();
+    go.onclick = () => {
+      const u = Math.min(val("#nu"), Math.floor(S.matV + S.matC), 14), p = +$("#np").value || 1;
+      const useC = Math.min(S.matC, u); S.matC -= useC; S.matV -= (u - useC); S.usedC += useC; S.usedV += (u - useC);
+      S.cash -= u * B.price * .15; S.prod += u;
+      const w = u * B.wr * (S.upg.design ? .5 : 1); S.waste += w;
+      const sl = Math.min(S.prod, demand(p)); S.prod -= sl; S.cash += sl * p; S.sold += sl;
+      const back = sl * RATE[S.upg.collect]; S.pending += back; S.lost += sl - back;
+      S.log.push(`Round ${S.round}: made ${u}, sold ${sl}, ${d1(back)} will come back.`);
+      say(`Made ${u} and sold ${sl} for ${$$(sl * p)}. ${d1(back)} should return next round; ${d1(sl - back)} left the loop for good.`); next(); };
+  } else if (S.phase === 2) {
+    if (!S.returning) { go.onclick = () => { say(""); next(); }; return; }
+    const upd = () => { const r = val("#nr"), c = val("#nc"), R = S.returning, dump = R - r - c;
+      const cost = r * B.price * .2 + c * B.price * .08 + Math.max(0, dump) * m.lf;
+      pv.innerHTML = dump < 0 ? `<span class="warn">You only have ${R} to allocate.</span>` : `Dumping ${dump}. Net: ${$$(r * B.price * .6 - cost)}.`;
+      go.disabled = dump < 0; };
+    ["#nr", "#nc"].forEach(i => $(i) && ($(i).oninput = upd)); upd();
+    go.onclick = () => { const r = S.upg.repair ? Math.min(val("#nr"), 8) : 0, c = val("#nc"), R = S.returning, dump = R - r - c;
+      S.cash += r * B.price * .6 - r * B.price * .2 - c * B.price * .08 - dump * m.lf;
+      S.matC += c * .6; S.kept += r + c; S.lost += dump; S.returning = 0;
+      say(`Repaired ${r}, recycled ${c}, dumped ${dump}.`); next(); };
+  } else if (S.phase === 3) {
+    if (!S.waste) { go.onclick = () => { say(""); next(); }; return; }
+    const upd = () => { const n = Math.min(val("#ns"), Math.floor(S.waste), 12), dump = S.waste - n;
+      pv.innerHTML = `Net: ${$$(n * (m.pay - m.btr) - dump * m.lf)}`; };
+    $("#ns").oninput = upd; upd();
+    go.onclick = () => { const n = Math.min(val("#ns"), Math.floor(S.waste), 12), dump = S.waste - n;
+      S.cash += n * (m.pay - m.btr) - dump * m.lf; S.kept += n; S.lost += dump;
+      S.streak = n > 0 ? S.streak + 1 : 0;
+      say(n ? `Sold ${n} units of ${B.waste}. Partnership streak: ${S.streak}${S.streak >= 2 ? ". Bonus price unlocked." : "."}` : `Dumped all waste. Partnership streak reset.`);
+      next(); };
+  } else {
+    document.querySelectorAll("[data-u]").forEach(b => b.onclick = () => {
+      const u = UPG.find(x => x.id === b.dataset.u), lv = S.upg[u.id], c = Math.round(u.cost[lv] * S.k / 5) * 5;
+      if (S.cash < c) return; S.cash -= c; S.upg[u.id]++; say(`Installed: ${u.n(lv)}.`); render(); });
+    go.onclick = () => { S.round++; if (S.round <= ROUNDS) newRound(); render(); };
+  }
+}
+
+function ending() {
+  const out = Math.round(circOut() * 100), inn = Math.round(circIn() * 100), profit = S.cash - S.startCash;
+  const badge = profit > 0 && out >= 60 ? "Circular business: profitable and loop-closing."
+    : profit > 0 ? "Profitable, but still mostly linear." : out >= 60 ? "Circular, but not yet profitable." : "Neither profitable nor circular. Try again.";
+  const tips = [];
+  if (inn < 30) tips.push("Little of your input came from the loop. Buying reclaimed material earlier would cut exposure to virgin price rises.");
+  if (S.upg.collect === 0) tips.push("You never built a collection system, so almost every product you sold left the loop.");
+  if (!S.upg.repair) tips.push("Repair keeps the most value. A workshop turns returned products into new revenue.");
+  if (S.streak < 2) tips.push("Steady trade with one waste buyer earns a partnership bonus.");
+  if (!tips.length) tips.push("Strong loop. Try a different business and see which partnerships matter most.");
+  $("#app").innerHTML = `<h1>Final report</h1><div class="grid">
+    <div class="card"><h2>${$$(profit)}</h2><span class="mute">profit over ${ROUNDS} rounds</span></div>
+    <div class="card"><h2>${out}%</h2><span class="mute">of outflows kept in the loop</span></div>
+    <div class="card"><h2>${inn}%</h2><span class="mute">of inputs came from the loop</span></div>
+    <div class="card"><h2>${S.sold}</h2><span class="mute">${S.B.prod}s sold</span></div></div>
+    <div class="card event"><h2>${badge}</h2><ul>${tips.map(t => `<li>${t}</li>`).join("")}</ul></div>
+    <button onclick="S=null;render()">Play again</button>`;
+}
+render();
+</script>
+</body>
+</html>
